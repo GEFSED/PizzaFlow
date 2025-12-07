@@ -12,13 +12,25 @@ except Exception:
 # ===== Оплата (эмуляция только) =====
 PAYMENT_MODE = "EMULATED_ONLY"  # учебный проект, реальные платежи запрещены
 
+
 class MockPaymentProvider:
     @staticmethod
     def charge(order_id: str, amount: int, outcome: str = "ok"):
         assert PAYMENT_MODE == "EMULATED_ONLY"
         if outcome == "ok":
-            return {"status": "Succeeded", "provider": "MockPay", "order_id": order_id, "amount": amount}
-        return {"status": "Failed", "provider": "MockPay", "order_id": order_id, "amount": amount}
+            return {
+                "status": "Succeeded",
+                "provider": "MockPay",
+                "order_id": order_id,
+                "amount": amount,
+            }
+        return {
+            "status": "Failed",
+            "provider": "MockPay",
+            "order_id": order_id,
+            "amount": amount,
+        }
+
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 DB_PATH = os.path.join(DATA_DIR, "app.db")  # теперь SQLite-файл, раньше был db.json
@@ -26,6 +38,7 @@ STORES_PATH = os.path.join(DATA_DIR, "stores.json")
 MENU_PATH = os.path.join(DATA_DIR, "menu.json")
 
 os.makedirs(DATA_DIR, exist_ok=True)
+
 
 # ===== БД на SQLite вместо JSON =====
 class DB:
@@ -41,7 +54,8 @@ class DB:
         cur = conn.cursor()
 
         # таблица пользователей
-        cur.execute("""
+        cur.execute(
+            """
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
             username TEXT,
@@ -50,10 +64,12 @@ class DB:
             address TEXT,
             age INTEGER
         )
-        """)
+        """
+        )
 
         # корзина (позиции)
-        cur.execute("""
+        cur.execute(
+            """
         CREATE TABLE IF NOT EXISTS cart_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT NOT NULL,
@@ -64,10 +80,12 @@ class DB:
             qty INTEGER,
             price INTEGER
         )
-        """)
+        """
+        )
 
         # заказы
-        cur.execute("""
+        cur.execute(
+            """
         CREATE TABLE IF NOT EXISTS orders (
             id TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
@@ -76,10 +94,12 @@ class DB:
             status TEXT NOT NULL,
             created_at INTEGER NOT NULL
         )
-        """)
+        """
+        )
 
         # позиции заказа
-        cur.execute("""
+        cur.execute(
+            """
         CREATE TABLE IF NOT EXISTS order_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             order_id TEXT NOT NULL,
@@ -89,7 +109,8 @@ class DB:
             qty INTEGER,
             price INTEGER
         )
-        """)
+        """
+        )
 
         conn.commit()
         conn.close()
@@ -98,7 +119,10 @@ class DB:
     def get_user(self, uid: str) -> Dict[str, Any]:
         conn = self._connect()
         cur = conn.cursor()
-        cur.execute("SELECT id, username, first_name, real_name, address, age FROM users WHERE id = ?", (uid,))
+        cur.execute(
+            "SELECT id, username, first_name, real_name, address, age FROM users WHERE id = ?",
+            (uid,),
+        )
         row = cur.fetchone()
         conn.close()
         if not row:
@@ -200,7 +224,9 @@ class DB:
         conn.close()
 
     # --- Orders ---
-    def create_order(self, uid: str, store_id: str, items: List[Dict[str, Any]], total: int) -> str:
+    def create_order(
+        self, uid: str, store_id: str, items: List[Dict[str, Any]], total: int
+    ) -> str:
         order_id = str(int(time.time()))
         created_at = int(time.time())
         conn = self._connect()
@@ -304,20 +330,22 @@ class DB:
         conn.commit()
         conn.close()
 
+
 # ===== Утилиты =====
 def load_json(path):
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
+
 def find_store(store_id: str, stores: list):
     return next((s for s in stores if s["id"] == store_id), None)
+
 
 def format_rub(v: int) -> str:
     return f"{v} ₽"
 
 
 # ===== Логика из заданий 2 и 3 (условия + функции) =====
-
 def validate_name(name: str) -> str:
     """
     Проверка имени:
@@ -360,6 +388,7 @@ STORES = load_json(STORES_PATH)
 MENU = load_json(MENU_PATH)
 bot = TeleBot(TOKEN)
 
+
 # ===== Команды =====
 @bot.message_handler(commands=["start", "help"])
 def cmd_start(m):
@@ -372,7 +401,8 @@ def cmd_start(m):
         "/address — задать адрес (строкой)\n"
         "/stores — список пиццерий\n"
         "/menu <store_id> — меню пиццерии\n"
-        "/add <item_id> <size> <qty> — добавить в корзину\n"
+        "/add <item_id> <size> <qty> — добавить одну позицию в корзину\n"
+        "/add_batch <список> — добавить сразу несколько позиций\n"
         "/cart — показать корзину\n"
         "/confirm <store_id> — оформить заказ\n"
         "/pay — оплата (эмуляция) | /pay fail — отказ\n"
@@ -381,10 +411,15 @@ def cmd_start(m):
     )
     bot.reply_to(m, text)
 
+
 @bot.message_handler(commands=["register"])
 def cmd_register(m):
     uid = str(m.from_user.id)
-    db.upsert_user(uid, username=m.from_user.username or "", first_name=m.from_user.first_name or "")
+    db.upsert_user(
+        uid,
+        username=m.from_user.username or "",
+        first_name=m.from_user.first_name or "",
+    )
     bot.reply_to(m, "✅ Регистрация выполнена. Введите адрес командой /address")
 
 
@@ -447,27 +482,39 @@ def cmd_address(m):
     db.upsert_user(uid, address=rest[1].strip())
     bot.reply_to(m, f"📍 Адрес сохранён: {rest[1].strip()}")
 
+
 @bot.message_handler(commands=["stores"])
 def cmd_stores(m):
     uid = str(m.from_user.id)
     user = db.get_user(uid)
-    city = user.get("address", "").split(",")[0].strip() if user.get("address") else None
+    city = (
+        user.get("address", "").split(",")[0].strip()
+        if user.get("address")
+        else None
+    )
     lines = []
     for s in STORES:
         if city and s["city"] != city:
             continue
         lines.append(f"- {s['name']} [{s['id']}] — {s['city']}, {s['address']}")
     if not lines:
-        lines = [f"- {s['name']} [{s['id']}] — {s['city']}, {s['address']}" for s in STORES]
+        lines = [
+            f"- {s['name']} [{s['id']}] — {s['city']}, {s['address']}"
+            for s in STORES
+        ]
         bot.reply_to(m, "По адресу город не распознан, покажу все пиццерии:\n" + "\n".join(lines))
     else:
         bot.reply_to(m, "Доступные пиццерии:\n" + "\n".join(lines))
+
 
 @bot.message_handler(commands=["menu"])
 def cmd_menu(m):
     parts = m.text.split()
     if len(parts) < 2:
-        bot.reply_to(m, "Использование: /menu <store_id>\nНапример: /menu msk-1")
+        bot.reply_to(
+            m,
+            "Использование: /menu <store_id>\nНапример: /menu msk-1",
+        )
         return
     store_id = parts[1]
     store = find_store(store_id, STORES)
@@ -478,25 +525,40 @@ def cmd_menu(m):
     if not items:
         bot.reply_to(m, "Меню пусто.")
         return
-    lines = [f"{i['name']} — {i['id']} | цены: " + ", ".join([f"{sz}:{price}₽" for sz, price in i["sizes"].items()]) for i in items]
-    bot.reply_to(m, f"Меню {store['name']}:\n" + "\n".join(lines) + "\n\nДобавьте позицию: /add <item_id> <size> <qty>")
+    lines = [
+        f"{i['name']} — {i['id']} | цены: "
+        + ", ".join([f"{sz}:{price}₽" for sz, price in i["sizes"].items()])
+        for i in items
+    ]
+    bot.reply_to(
+        m,
+        f"Меню {store['name']}:\n"
+        + "\n".join(lines)
+        + "\n\nДобавьте позицию: /add <item_id> <size> <qty> или /add_batch ...",
+    )
+
 
 @bot.message_handler(commands=["add"])
 def cmd_add(m):
     parts = m.text.split()
     if len(parts) != 4:
-        bot.reply_to(m, "Использование: /add <item_id> <size> <qty>\nНапример: /add pepperoni M 2")
+        bot.reply_to(
+            m,
+            "Использование: /add <item_id> <size> <qty>\nНапример: /add pepperoni M 2",
+        )
         return
     item_id, size, qty_s = parts[1], parts[2].upper(), parts[3]
     try:
         qty = int(qty_s)
         if qty <= 0:
             raise ValueError
-    except:
+    except Exception:
         bot.reply_to(m, "Количество должно быть положительным числом.")
         return
 
-    candidate = next((i for i in MENU if i["id"] == item_id and size in i["sizes"]), None)
+    candidate = next(
+        (i for i in MENU if i["id"] == item_id and size in i["sizes"]), None
+    )
     if not candidate:
         bot.reply_to(m, "Такого товара/размера нет в меню.")
         return
@@ -504,33 +566,148 @@ def cmd_add(m):
     uid = str(m.from_user.id)
     cart = db.get_cart(uid)
     price = int(candidate["sizes"][size])
-    cart.append({
-        "item_id": item_id,
-        "item_name": candidate["name"],
-        "store_id": candidate["store_id"],
-        "size": size,
-        "qty": qty,
-        "price": price
-    })
+    cart.append(
+        {
+            "item_id": item_id,
+            "item_name": candidate["name"],
+            "store_id": candidate["store_id"],
+            "size": size,
+            "qty": qty,
+            "price": price,
+        }
+    )
     db.set_cart(uid, cart)
-    bot.reply_to(m, f"✅ Добавлено: {candidate['name']} {size} x{qty} — {price*qty} ₽")
+    bot.reply_to(
+        m,
+        f"✅ Добавлено: {candidate['name']} {size} x{qty} — {price * qty} ₽",
+    )
+
+
+@bot.message_handler(commands=["add_batch"])
+def cmd_add_batch(m):
+    """
+    /add_batch pepperoni M 2, margherita L 1
+    Добавляет сразу несколько позиций в корзину.
+    Формат: /add_batch <item_id> <size> <qty>, <item_id> <size> <qty>, ...
+    Пример: /add_batch pepperoni M 2, margherita L 1
+    """
+    uid = str(m.from_user.id)
+
+    parts = m.text.split(" ", 1)
+    if len(parts) < 2 or not parts[1].strip():
+        bot.reply_to(
+            m,
+            "Использование:\n"
+            "/add_batch pepperoni M 2, margherita L 1\n"
+            "где через запятую перечислены позиции: <item_id> <size> <qty>.",
+        )
+        return
+
+    raw_items = parts[1].split(",")  # список строк по запятым
+    cart = db.get_cart(uid)
+
+    added_lines: List[str] = []
+    error_lines: List[str] = []
+
+    # === ЦИКЛ по позициям (пример использования for) ===
+    for raw in raw_items:
+        chunk = raw.strip()
+        if not chunk:
+            continue
+
+        pieces = chunk.split()
+        if len(pieces) != 3:
+            error_lines.append(f"«{chunk}» — ожидалось: <item_id> <size> <qty>")
+            continue
+
+        item_id, size, qty_s = pieces[0], pieces[1].upper(), pieces[2]
+
+        # проверяем количество
+        try:
+            qty = int(qty_s)
+            if qty <= 0:
+                raise ValueError
+        except ValueError:
+            error_lines.append(
+                f"«{chunk}» — количество должно быть положительным числом."
+            )
+            continue
+
+        # ищем товар в меню
+        candidate = next(
+            (i for i in MENU if i["id"] == item_id and size in i["sizes"]),
+            None,
+        )
+        if not candidate:
+            error_lines.append(
+                f"«{chunk}» — такого товара/размера нет в меню."
+            )
+            continue
+
+        price = int(candidate["sizes"][size])
+        cart.append(
+            {
+                "item_id": item_id,
+                "item_name": candidate["name"],
+                "store_id": candidate["store_id"],
+                "size": size,
+                "qty": qty,
+                "price": price,
+            }
+        )
+        added_lines.append(
+            f"{candidate['name']} {size} x{qty} — {price * qty} ₽"
+        )
+
+    if added_lines:
+        db.set_cart(uid, cart)
+
+    if not added_lines and not error_lines:
+        bot.reply_to(
+            m,
+            "Не удалось распознать ни одной позиции. "
+            "Проверьте формат команды /add_batch.",
+        )
+        return
+
+    reply_parts: List[str] = []
+    if added_lines:
+        reply_parts.append("✅ Добавлены позиции:\n- " + "\n- ".join(added_lines))
+    if error_lines:
+        reply_parts.append("\n⚠ Ошибки:\n- " + "\n- ".join(error_lines))
+
+    bot.reply_to(m, "\n".join(reply_parts))
+
 
 @bot.message_handler(commands=["cart"])
 def cmd_cart(m):
     uid = str(m.from_user.id)
     cart = db.get_cart(uid)
     if not cart:
-        bot.reply_to(m, "Корзина пуста. Добавьте позиции командой /add")
+        bot.reply_to(
+            m,
+            "Корзина пуста. Добавьте позиции командой /add или /add_batch",
+        )
         return
     total = sum(p["price"] * p["qty"] for p in cart)
-    lines = [f"- {p['item_name']} {p['size']} x{p['qty']} — {p['price']*p['qty']} ₽ (store:{p['store_id']})" for p in cart]
-    bot.reply_to(m, "🧺 Корзина:\n" + "\n".join(lines) + f"\nИтого: {total} ₽")
+    lines = [
+        f"- {p['item_name']} {p['size']} x{p['qty']} — {p['price'] * p['qty']} ₽ (store:{p['store_id']})"
+        for p in cart
+    ]
+    bot.reply_to(
+        m,
+        "🧺 Корзина:\n" + "\n".join(lines) + f"\nИтого: {total} ₽",
+    )
+
 
 @bot.message_handler(commands=["confirm"])
 def cmd_confirm(m):
     parts = m.text.split()
     if len(parts) < 2:
-        bot.reply_to(m, "Укажите магазин: /confirm <store_id>\nПример: /confirm msk-1")
+        bot.reply_to(
+            m,
+            "Укажите магазин: /confirm <store_id>\nПример: /confirm msk-1",
+        )
         return
     store_id = parts[1]
     uid = str(m.from_user.id)
@@ -539,12 +716,21 @@ def cmd_confirm(m):
         bot.reply_to(m, "Корзина пуста.")
         return
     if any(p["store_id"] != store_id for p in cart):
-        bot.reply_to(m, "Все позиции в заказе должны быть из одной пиццерии. Очистите корзину или добавьте позиции из одного магазина.")
+        bot.reply_to(
+            m,
+            "Все позиции в заказе должны быть из одной пиццерии. "
+            "Очистите корзину или добавьте позиции из одного магазина.",
+        )
         return
     total = sum(p["price"] * p["qty"] for p in cart)
     order_id = db.create_order(uid, store_id, cart, total)
     db.clear_cart(uid)
-    bot.reply_to(m, f"🧾 Заказ создан #{order_id}. Сумма: {total} ₽\nПерейдите к оплате: /pay (или /pay fail — отказ)")
+    bot.reply_to(
+        m,
+        f"🧾 Заказ создан #{order_id}. Сумма: {total} ₽\n"
+        f"Перейдите к оплате: /pay (или /pay fail — отказ)",
+    )
+
 
 @bot.message_handler(commands=["pay"])
 def cmd_pay(m):
@@ -562,13 +748,24 @@ def cmd_pay(m):
         bot.reply_to(m, "Этот заказ уже завершён.")
         return
 
-    result = MockPaymentProvider.charge(order["id"], order["total"], outcome=outcome)
+    result = MockPaymentProvider.charge(
+        order["id"], order["total"], outcome=outcome
+    )
     if result["status"] == "Succeeded":
         db.set_order_status(order["id"], "Confirmed")
-        bot.reply_to(m, f"✅ Оплата (эмуляция) прошла: {result['amount']} ₽. Статус заказа #{order['id']}: Confirmed\nПроверьте статус: /status")
+        bot.reply_to(
+            m,
+            f"✅ Оплата (эмуляция) прошла: {result['amount']} ₽. "
+            f"Статус заказа #{order['id']}: Confirmed\nПроверьте статус: /status",
+        )
     else:
         db.set_order_status(order["id"], "Pending")
-        bot.reply_to(m, f"❌ Оплата (эмуляция) отклонена. Статус заказа #{order['id']}: Pending")
+        bot.reply_to(
+            m,
+            f"❌ Оплата (эмуляция) отклонена. "
+            f"Статус заказа #{order['id']}: Pending",
+        )
+
 
 @bot.message_handler(commands=["status"])
 def cmd_status(m):
@@ -579,11 +776,13 @@ def cmd_status(m):
         return
     bot.reply_to(m, f"Статус заказа #{order['id']}: {order['status']}")
 
+
 @bot.message_handler(commands=["cancel"])
 def cmd_cancel(m):
     uid = str(m.from_user.id)
     db.clear_cart(uid)
     bot.reply_to(m, "🗑 Корзина очищена.")
+
 
 # ===== Запуск =====
 if __name__ == "__main__":
