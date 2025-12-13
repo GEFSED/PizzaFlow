@@ -10,7 +10,7 @@ except Exception:
     TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "ВАШ_ТОКЕН_ОТ_BOTFATHER")
 
 # ===== Оплата (эмуляция только) =====
-PAYMENT_MODE = "EMULATED_ONLY"  # учебный проект, реальные платежи запрещены
+PAYMENT_MODE = "EMULATED_ONLY"
 
 
 class MockPaymentProvider:
@@ -382,6 +382,136 @@ def check_age(age: int) -> str:
         return "Возраст подходит, можно продолжать регистрацию и пользоваться приложением."
 
 
+def process_batch_items(uid: str, *raw_items: str):
+    """
+    Обрабатывает несколько позиций заказа сразу.
+    raw_items — строки вида 'pepperoni M 2', 'cheese L 1' и т.п.
+    Возвращает (added_lines, error_lines, updated_cart).
+    """
+    cart = db.get_cart(uid)
+    added_lines: List[str] = []
+    error_lines: List[str] = []
+
+    for raw in raw_items:
+        chunk = raw.strip()
+        if not chunk:
+            continue
+
+        pieces = chunk.split()
+        if len(pieces) != 3:
+            error_lines.append(f"«{chunk}» — ожидалось: <item_id> <size> <qty>")
+            continue
+
+        item_id, size, qty_s = pieces[0], pieces[1].upper(), pieces[2]
+
+        # проверка количества
+        try:
+            qty = int(qty_s)
+            if qty <= 0:
+                raise ValueError
+        except ValueError:
+            error_lines.append(
+                f"«{chunk}» — количество должно быть положительным числом."
+            )
+            continue
+
+        # поиск товара в меню
+        candidate = next(
+            (i for i in MENU if i["id"] == item_id and size in i["sizes"]),
+            None,
+        )
+        if not candidate:
+            error_lines.append(
+                f"«{chunk}» — такого товара/размера нет в меню."
+            )
+            continue
+
+        price = int(candidate["sizes"][size])
+        cart.append(
+            {
+                "item_id": item_id,
+                "item_name": candidate["name"],
+                "store_id": candidate["store_id"],
+                "size": size,
+                "qty": qty,
+                "price": price,
+            }
+        )
+        added_lines.append(
+            f"{candidate['name']} {size} x{qty} — {price * qty} ₽"
+        )
+
+    if added_lines:
+        db.set_cart(uid, cart)
+
+    return added_lines, error_lines, cart
+
+
+def process_batch_items_recursive(
+    uid: str,
+    raw_items: List[str],
+    index: int = 0,
+    added: List[str] | None = None,
+    errors: List[str] | None = None,
+):
+    """
+    Рекурсивная версия обработки нескольких позиций без циклов.
+    raw_items — список строк, каждая 'pepperoni M 2' и т.п.
+    """
+    if added is None:
+        added = []
+    if errors is None:
+        errors = []
+
+    # базовый случай
+    if index >= len(raw_items):
+        return added, errors
+
+    chunk = raw_items[index].strip()
+    if chunk:
+        pieces = chunk.split()
+        if len(pieces) != 3:
+            errors.append(f"«{chunk}» — ожидалось: <item_id> <size> <qty>")
+        else:
+            item_id, size, qty_s = pieces[0], pieces[1].upper(), pieces[2]
+            try:
+                qty = int(qty_s)
+                if qty <= 0:
+                    raise ValueError
+                candidate = next(
+                    (i for i in MENU if i["id"] == item_id and size in i["sizes"]),
+                    None,
+                )
+                if not candidate:
+                    errors.append(
+                        f"«{chunk}» — такого товара/размера нет в меню."
+                    )
+                else:
+                    price = int(candidate["sizes"][size])
+                    cart = db.get_cart(uid)
+                    cart.append(
+                        {
+                            "item_id": item_id,
+                            "item_name": candidate["name"],
+                            "store_id": candidate["store_id"],
+                            "size": size,
+                            "qty": qty,
+                            "price": price,
+                        }
+                    )
+                    db.set_cart(uid, cart)
+                    added.append(
+                        f"{candidate['name']} {size} x{qty} — {price * qty} ₽"
+                    )
+            except ValueError:
+                errors.append(
+                    f"«{chunk}» — количество должно быть положительным числом."
+                )
+
+    # рекурсивный переход к следующему элементу
+    return process_batch_items_recursive(uid, raw_items, index + 1, added, errors)
+
+
 # ===== Инициализация =====
 db = DB(DB_PATH)
 STORES = load_json(STORES_PATH)
@@ -603,64 +733,9 @@ def cmd_add_batch(m):
         )
         return
 
-    raw_items = parts[1].split(",")  # список строк по запятым
-    cart = db.get_cart(uid)
+    raw_items = [chunk.strip() for chunk in parts[1].split(",") if chunk.strip()]
 
-    added_lines: List[str] = []
-    error_lines: List[str] = []
-
-    # === ЦИКЛ по позициям (пример использования for) ===
-    for raw in raw_items:
-        chunk = raw.strip()
-        if not chunk:
-            continue
-
-        pieces = chunk.split()
-        if len(pieces) != 3:
-            error_lines.append(f"«{chunk}» — ожидалось: <item_id> <size> <qty>")
-            continue
-
-        item_id, size, qty_s = pieces[0], pieces[1].upper(), pieces[2]
-
-        # проверяем количество
-        try:
-            qty = int(qty_s)
-            if qty <= 0:
-                raise ValueError
-        except ValueError:
-            error_lines.append(
-                f"«{chunk}» — количество должно быть положительным числом."
-            )
-            continue
-
-        # ищем товар в меню
-        candidate = next(
-            (i for i in MENU if i["id"] == item_id and size in i["sizes"]),
-            None,
-        )
-        if not candidate:
-            error_lines.append(
-                f"«{chunk}» — такого товара/размера нет в меню."
-            )
-            continue
-
-        price = int(candidate["sizes"][size])
-        cart.append(
-            {
-                "item_id": item_id,
-                "item_name": candidate["name"],
-                "store_id": candidate["store_id"],
-                "size": size,
-                "qty": qty,
-                "price": price,
-            }
-        )
-        added_lines.append(
-            f"{candidate['name']} {size} x{qty} — {price * qty} ₽"
-        )
-
-    if added_lines:
-        db.set_cart(uid, cart)
+    added_lines, error_lines, _ = process_batch_items(uid, *raw_items)
 
     if not added_lines and not error_lines:
         bot.reply_to(
